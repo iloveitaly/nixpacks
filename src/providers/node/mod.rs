@@ -115,7 +115,7 @@ impl Provider for NodeProvider {
         setup.set_nix_archive(NODE_NIXPKGS_ARCHIVE.into());
 
         if NodeProvider::uses_node_dependency(app, "prisma") {
-            setup.add_nix_pkgs(&[Pkg::new("openssl")]);
+            setup.add_pkgs_libs(vec!["openssl".to_string()]);
         }
 
         if NodeProvider::uses_node_dependency(app, "puppeteer") {
@@ -133,7 +133,9 @@ impl Provider for NodeProvider {
                 "libxshmfence1".to_string(),
                 "libglu1".to_string(),
             ]);
-        } else if NodeProvider::uses_node_dependency(app, "canvas") {
+        }
+
+        if NodeProvider::uses_node_dependency(app, "canvas") {
             setup.add_pkgs_libs(vec!["libuuid".to_string(), "libGL".to_string()]);
         }
 

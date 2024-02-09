@@ -2,6 +2,7 @@ use crate::{
     chain,
     nixpacks::{
         app::App,
+        asdf::parse_tool_versions_content,
         environment::{Environment, EnvironmentVariables},
         plan::{
             phase::{Phase, StartPhase},
@@ -67,18 +68,30 @@ impl Provider for PythonProvider {
             plan.set_start_phase(start);
         }
 
-        plan.add_variables(EnvironmentVariables::from([(
-            "PYTHONUNBUFFERED".to_owned(),
-            "1".to_owned(),
-        )]));
+        plan.add_variables(PythonProvider::default_python_environment_variables());
 
         if app.includes_file("poetry.lock") {
+            let mut version = POETRY_VERSION.to_string();
+
+            if app.includes_file(".tool-versions") {
+                let file_content = &app.read_file(".tool-versions")?;
+
+                if let Some(poetry_version) =
+                    PythonProvider::parse_tool_versions_poetry_version(file_content)?
+                {
+                    println!(
+                        "Using poetry version from .tool-versions: {}",
+                        poetry_version
+                    );
+                    version = poetry_version;
+                }
+            }
+
             plan.add_variables(EnvironmentVariables::from([(
                 "NIXPACKS_POETRY_VERSION".to_string(),
-                POETRY_VERSION.to_string(),
+                version,
             )]));
         }
-
         if app.includes_file("pdm.lock") {
             plan.add_variables(EnvironmentVariables::from([(
                 "NIXPACKS_PDM_VERSION".to_string(),
@@ -301,6 +314,46 @@ impl PythonProvider {
             .map(|m| m.get(2).unwrap().as_str().to_string()))
     }
 
+    fn default_python_environment_variables() -> EnvironmentVariables {
+        let python_variables = vec![
+            ("PYTHONFAULTHANDLER", "1"),
+            ("PYTHONUNBUFFERED", "1"),
+            ("PYTHONHASHSEED", "random"),
+            ("PYTHONDONTWRITEBYTECODE", "1"),
+            ("PIP_NO_CACHE_DIR", "1"),
+            ("PIP_DISABLE_PIP_VERSION_CHECK", "1"),
+            ("PIP_DEFAULT_TIMEOUT", "100"),
+        ];
+
+        let mut env_vars = EnvironmentVariables::new();
+
+        for (key, value) in python_variables {
+            env_vars.insert(key.to_owned(), value.to_owned());
+        }
+
+        env_vars
+    }
+
+    fn parse_tool_versions_python_version(file_content: &str) -> Result<Option<String>> {
+        let asdf_versions = parse_tool_versions_content(file_content);
+
+        // the python version can only specify a major.minor version right now, and not a patch version
+        Ok(asdf_versions.get("python").map(|s| {
+            let parts: Vec<&str> = s.split('.').collect();
+            assert_eq!(
+                parts.len(),
+                3,
+                "Expected a version string in the format x.x.x"
+            );
+            format!("{}.{}", parts[0], parts[1])
+        }))
+    }
+
+    fn parse_tool_versions_poetry_version(file_content: &str) -> Result<Option<String>> {
+        let asdf_versions = parse_tool_versions_content(file_content);
+        Ok(asdf_versions.get("poetry").cloned())
+    }
+
     fn get_nix_python_package(app: &App, env: &Environment) -> Result<Pkg> {
         // Fetch python versions into tuples with defaults
         fn as_default(v: Option<Match>) -> &str {
@@ -321,6 +374,9 @@ impl PythonProvider {
         } else if app.includes_file("Pipfile") {
             let file_content = &app.read_file("Pipfile")?;
             custom_version = PythonProvider::parse_pipfile_python_version(file_content)?;
+        } else if app.includes_file(".tool-versions") {
+            let file_content = &app.read_file(".tool-versions")?;
+            custom_version = PythonProvider::parse_tool_versions_python_version(file_content)?;
         }
 
         // If it's still none, return default
